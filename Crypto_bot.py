@@ -12,8 +12,8 @@ from telegram.constants import ParseMode
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
-SEND_HOUR      = 8
-SEND_MINUTE    = 0
+SEND_HOUR      = 12
+SEND_MINUTE    = 30
 MIN_SCORE      = 80
 
 SYMBOLS = [
@@ -232,6 +232,7 @@ if __name__=="__main__":
     logger.info(f"Bot avviato — analisi alle {send_time} UTC ogni giorno")
     job()
     schedule.every().day.at(send_time).do(job)
-    while True:
+    schedule.every().day.at("20:00").do(job)
+while True:
         schedule.run_pending()
         time.sleep(30)
