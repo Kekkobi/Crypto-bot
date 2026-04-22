@@ -17,10 +17,8 @@ SEND_MINUTE    = 30
 MIN_SCORE      = 80
 
 SYMBOLS = [
-    "BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT",
-    "XRP/USDT","DOGE/USDT","ADA/USDT","AVAX/USDT",
-    "MATIC/USDT","LINK/USDT",
-]
+    "BTC/USDT","ETH/USDT","SOL/USDT","LINK/USDT","XAUT/USDT"
+
 
 logging.basicConfig(format="%(asctime)s — %(levelname)s — %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
