@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from telegram import Bot
 from telegram.constants import ParseMode
 
-TELEGRAM_TOKEN = "IL_TUO_TOKEN_QUI"
-CHAT_ID        = "IL_TUO_CHAT_ID_QUI"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 SEND_HOUR      = 8
 SEND_MINUTE    = 0
 MIN_SCORE      = 80
