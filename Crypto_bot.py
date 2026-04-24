@@ -8,16 +8,18 @@ import pandas as pd
 import ta
 from datetime import datetime, timezone
 from telegram import Bot
-from telegram.constants import ParseMode
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
+CHAT_ID        = os.environ.get("CHAT_ID")
 SEND_HOUR      = 12
 SEND_MINUTE    = 30
 MIN_SCORE      = 80
 
+# Memoria segnali già inviati (evita duplicati)
+sent_signals = {}
+
 SYMBOLS = [
-        "BTC/USDT","ETH/USDT","SOL/USDT","LINK/USDT","XAUT/USDT","BNB/USDT","JUP/USDT",
+    "BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT","DOGE/USDT","ADA/USDT","AVAX/USDT","LINK/USDT","DOT/USDT","MATIC/USDT","UNI/USDT","LTC/USDT","BCH/USDT","NEAR/USDT","ICP/USDT","APT/USDT","ATOM/USDT","FIL/USDT","ARB/USDT","OP/USDT","AAVE/USDT","GRT/USDT","PEPE/USDT","FLOKI/USDT","BONK/USDT","WIF/USDT","ORDI/USDT","INJ/USDT","SUI/USDT","SEI/USDT","TIA/USDT","JUP/USDT","WLD/USDT","PENDLE/USDT","BLUR/USDT","CFX/USDT","MASK/USDT","GMX/USDT","FTM/USDT","SAND/USDT","MANA/USDT","AXS/USDT","THETA/USDT","EOS/USDT","XLM/USDT","ALGO/USDT","VET/USDT","HBAR/USDT","ROSE/USDT","CHZ/USDT","ENJ/USDT","ZIL/USDT","WAVES/USDT","DASH/USDT","XMR/USDT","COMP/USDT","SNX/USDT","CRV/USDT","1INCH/USDT","SUSHI/USDT","KAVA/USDT","OCEAN/USDT","ANKR/USDT","HOT/USDT","ZRX/USDT","BAND/USDT","SKL/USDT","COTI/USDT","RSR/USDT","CELR/USDT","DENT/USDT","WIN/USDT","FUN/USDT","MOVE/USDT","ENA/USDT","STRK/USDT","PYTH/USDT","MANTA/USDT","ALT/USDT","BOME/USDT","NEIRO/USDT","PNUT/USDT","ACT/USDT","TRUMP/USDT","PENGU/USDT","BERA/USDT","LAYER/USDT","IP/USDT","NOT/USDT","EIGEN/USDT","ETHFI/USDT","W/USDT","ZK/USDT","DOGS/USDT","HMSTR/USDT","CATI/USDT","SCR/USDT","GRASS/USDT","USUAL/USDT","VANA/USDT","SOLV/USDT","ANIME/USDT","INIT/USDT",
 ]
 
 logging.basicConfig(format="%(asctime)s — %(levelname)s — %(message)s", level=logging.INFO)
@@ -141,19 +143,20 @@ def pct_str(now,prev):
     p=(now-prev)/prev*100
     return f"{'▲' if p>=0 else '▼'} {abs(p):.2f}%"
 
-def build_signal_msg(sym,t4h,t1d,pats,score,s4h,s1d):
+def build_signal_msg(sym,t4h,t1d,pats,score,s4h,s1d,is_alert=False):
     bullish=score>=50
     tg=compute_targets(t4h,t1d,bullish)
     price=t1d["price"]
     name=sym.replace("/USDT","")
-    header="STRONG BULLISH" if bullish else "STRONG BEARISH"
+    now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    header="🚨 ALERT" if is_alert else "📊 SEGNALE"
+    direction="STRONG BULLISH 🟢" if bullish else "STRONG BEARISH 🔴"
     sign="+" if bullish else ""
-    now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines=[
-        f"CRYPTO SIGNAL — {name}/USDT",
-        f"{'STRONG BULLISH' if bullish else 'STRONG BEARISH'} ({score}% confidence)",
+        f"{header} — {name}/USDT",
+        f"{direction} ({score}% confidence)",
         f"",
-        f"4h score: {s4h}%  |  1d score: {s1d}%",
+        f"4h: {s4h}%  |  1d: {s1d}%",
         f"",
         f"Prezzo: ${price:,.4f}  {pct_str(price,t1d['prev'])}",
         f"Target 4h: ${tg['tp1']:,.4f} ({sign}{tg['pct1']}%)",
@@ -165,16 +168,16 @@ def build_signal_msg(sym,t4h,t1d,pats,score,s4h,s1d):
         f"EMA50: {t1d['ema50']:.2f}  |  EMA200: {t1d['ema200']:.2f}",
         f"Stoch: {t1d['stoch_k']:.1f}/{t1d['stoch_d']:.1f}  |  Vol: {t1d['vol_ratio']:.2f}x",
         f"",
-        f"Pattern candele:",
+        f"Pattern: {', '.join(pats)}",
+        f"",
+        f"{now}",
     ]
-    for p in pats: lines.append(f"• {p}")
-    lines.append(f"\n{now}")
     return "\n".join(lines)
 
 def build_summary(fg,gl,n_signals,n_analysed):
     now=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     lines=[
-        f"CRYPTO DAILY REPORT — {now}",
+        f"📊 CRYPTO DAILY REPORT — {now}",
         f"",
         f"Fear & Greed: {fg['value']} — {fg_emoji(fg['value'])}",
     ]
@@ -194,43 +197,79 @@ def build_summary(fg,gl,n_signals,n_analysed):
         lines+=["","Nessun segnale forte oggi. Meglio aspettare."]
     return "\n".join(lines)
 
-async def run_analysis():
-    logger.info("Avvio analisi...")
+async def scan(is_daily=False):
+    global sent_signals
+    logger.info(f"Avvio scansione {'giornaliera' if is_daily else 'oraria'}...")
     bot=Bot(token=TELEGRAM_TOKEN)
-    fg=fetch_fear_greed()
-    gl=fetch_global()
     strong=[]
+
     for sym in SYMBOLS:
-        logger.info(f"Analizzando {sym}...")
-        df4h=fetch_ohlcv(sym,"4h",200)
-        df1d=fetch_ohlcv(sym,"1d",200)
-        if df4h is None or df1d is None or len(df1d)<55: continue
-        t4h=analyse(df4h)
-        t1d=analyse(df1d)
-        pats,cpts=candle_score(df1d)
-        s4h=score_tf(t4h,0)
-        s1d=score_tf(t1d,cpts)
-        score=combined_score(s4h,s1d)
-        if score>=MIN_SCORE or score<=(100-MIN_SCORE):
-            strong.append({"sym":sym,"t4h":t4h,"t1d":t1d,"pats":pats,"score":score,"s4h":s4h,"s1d":s1d})
-    summary=build_summary(fg,gl,len(strong),len(SYMBOLS))
-    await bot.send_message(chat_id=CHAT_ID,text=summary)
-    await asyncio.sleep(1)
+        try:
+            df4h=fetch_ohlcv(sym,"4h",200)
+            df1d=fetch_ohlcv(sym,"1d",200)
+            if df4h is None or df1d is None or len(df1d)<55: continue
+            t4h=analyse(df4h)
+            t1d=analyse(df1d)
+            pats,cpts=candle_score(df1d)
+            s4h=score_tf(t4h,0)
+            s1d=score_tf(t1d,cpts)
+            score=combined_score(s4h,s1d)
+            bullish=score>=50
+            direction="BULL" if bullish else "BEAR"
+
+            is_strong = score>=MIN_SCORE or score<=(100-MIN_SCORE)
+            if not is_strong:
+                continue
+
+            # Controlla se già inviato nelle ultime 24 ore
+            signal_key=f"{sym}_{direction}"
+            last_sent=sent_signals.get(signal_key)
+            now_ts=time.time()
+
+            if not is_daily and last_sent and (now_ts-last_sent)<86400:
+                logger.info(f"  {sym} segnale già inviato, skip")
+                continue
+
+            # Aggiorna memoria
+            sent_signals[signal_key]=now_ts
+            strong.append({"sym":sym,"t4h":t4h,"t1d":t1d,"pats":pats,
+                           "score":score,"s4h":s4h,"s1d":s1d})
+        except Exception as e:
+            logger.error(f"Errore {sym}: {e}")
+            continue
+
+    if is_daily:
+        fg=fetch_fear_greed()
+        gl=fetch_global()
+        summary=build_summary(fg,gl,len(strong),len(SYMBOLS))
+        await bot.send_message(chat_id=CHAT_ID,text=summary)
+        await asyncio.sleep(1)
+
     for sig in strong:
-        msg=build_signal_msg(sig["sym"],sig["t4h"],sig["t1d"],sig["pats"],sig["score"],sig["s4h"],sig["s1d"])
+        msg=build_signal_msg(sig["sym"],sig["t4h"],sig["t1d"],
+                             sig["pats"],sig["score"],sig["s4h"],sig["s1d"],
+                             is_alert=not is_daily)
         await bot.send_message(chat_id=CHAT_ID,text=msg)
         await asyncio.sleep(1)
-    logger.info(f"Fatto. Segnali: {len(strong)}")
 
-def job():
-    asyncio.run(run_analysis())
+    logger.info(f"Scansione completata. Segnali: {len(strong)}")
+
+def daily_job():
+    asyncio.run(scan(is_daily=True))
+
+def hourly_job():
+    asyncio.run(scan(is_daily=False))
 
 if __name__=="__main__":
     send_time=f"{SEND_HOUR:02d}:{SEND_MINUTE:02d}"
-    logger.info(f"Bot avviato — analisi alle {send_time} UTC ogni giorno")
-    job()
-    schedule.every().day.at(send_time).do(job)
-    schedule.every().day.at("20:00").do(job)
-while True:
+    logger.info(f"Bot avviato — report giornaliero alle {send_time} UTC")
+    logger.info(f"Scansione alert ogni ora — soglia {MIN_SCORE}%")
+
+    daily_job()
+
+    schedule.every().day.at(send_time).do(daily_job)
+    schedule.every().hour.do(hourly_job)
+
+    while True:
         schedule.run_pending()
         time.sleep(30)
