@@ -5,6 +5,7 @@ import schedule
 import time
 import requests
 import pandas as pd
+import numpy as np
 import ta
 from datetime import datetime, timezone
 from telegram import Bot
@@ -15,7 +16,6 @@ SEND_HOUR      = 12
 SEND_MINUTE    = 30
 MIN_SCORE      = 80
 
-# Memoria segnali già inviati (evita duplicati)
 sent_signals = {}
 
 SYMBOLS = [
@@ -25,6 +25,10 @@ SYMBOLS = [
 logging.basicConfig(format="%(asctime)s — %(levelname)s — %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# ══════════════════════════════════════════════
+#  FETCH DATI
+# ══════════════════════════════════════════════
 def fetch_ohlcv(symbol, timeframe, limit=200):
     try:
         import ccxt
@@ -37,6 +41,44 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
         logger.error(f"Errore fetch {symbol} {timeframe}: {e}")
         return None
 
+def fetch_funding_rate(symbol):
+    try:
+        import ccxt
+        ex = ccxt.binance({"enableRateLimit": True})
+        sym = symbol.replace("/","")
+        data = ex.fetch_funding_rate(symbol)
+        return round(data["fundingRate"] * 100, 4)
+    except:
+        return None
+
+def fetch_btc_trend():
+    try:
+        df = fetch_ohlcv("BTC/USDT", "1d", 10)
+        if df is None: return "neutro"
+        change = (df["close"].iloc[-1] - df["close"].iloc[-3]) / df["close"].iloc[-3] * 100
+        if change > 3: return "bullish"
+        if change < -3: return "bearish"
+        return "neutro"
+    except:
+        return "neutro"
+
+def fetch_news_sentiment(symbol):
+    try:
+        name = symbol.replace("/USDT","").lower()
+        url = f"https://cryptopanic.com/api/v1/posts/?auth_token=public&currencies={name}&kind=news"
+        r = requests.get(url, timeout=8).json()
+        results = r.get("results", [])[:10]
+        if not results: return 0
+        positive = sum(1 for x in results if x.get("votes",{}).get("positive",0) > x.get("votes",{}).get("negative",0))
+        negative = sum(1 for x in results if x.get("votes",{}).get("negative",0) > x.get("votes",{}).get("positive",0))
+        return round((positive - negative) / max(len(results),1) * 100)
+    except:
+        return 0
+
+
+# ══════════════════════════════════════════════
+#  ANALISI TECNICA
+# ══════════════════════════════════════════════
 def analyse(df):
     c,h,l = df["close"],df["high"],df["low"]
     rsi = ta.momentum.RSIIndicator(c,14).rsi().iloc[-1]
@@ -54,11 +96,71 @@ def analyse(df):
     stoch_d = stoch.stoch_signal().iloc[-1]
     vol_sma = df["volume"].rolling(20).mean().iloc[-1]
     vol_ratio = df["volume"].iloc[-1]/vol_sma if vol_sma>0 else 1.0
-    return {"price":c.iloc[-1],"prev":c.iloc[-2],"rsi":rsi,"macd":macd,
-            "macd_sig":macd_sig,"macd_hist":macd_hist,"bb_upper":bb_upper,
-            "bb_lower":bb_lower,"ema50":ema50,"ema200":ema200,
-            "stoch_k":stoch_k,"stoch_d":stoch_d,"vol_ratio":vol_ratio}
+    return {
+        "price":c.iloc[-1],"prev":c.iloc[-2],
+        "rsi":rsi,"macd":macd,"macd_sig":macd_sig,"macd_hist":macd_hist,
+        "bb_upper":bb_upper,"bb_lower":bb_lower,
+        "ema50":ema50,"ema200":ema200,
+        "stoch_k":stoch_k,"stoch_d":stoch_d,
+        "vol_ratio":vol_ratio,
+        "closes":c.values,"highs":h.values,"lows":l.values,
+    }
 
+
+# ══════════════════════════════════════════════
+#  DIVERGENZE RSI
+# ══════════════════════════════════════════════
+def detect_rsi_divergence(df):
+    try:
+        c = df["close"]
+        rsi_series = ta.momentum.RSIIndicator(c,14).rsi()
+        p1_price = c.iloc[-10]; p2_price = c.iloc[-1]
+        p1_rsi = rsi_series.iloc[-10]; p2_rsi = rsi_series.iloc[-1]
+        if p2_price > p1_price and p2_rsi < p1_rsi:
+            return "bearish"  # prezzo sale, RSI scende
+        if p2_price < p1_price and p2_rsi > p1_rsi:
+            return "bullish"  # prezzo scende, RSI sale
+        return None
+    except:
+        return None
+
+
+# ══════════════════════════════════════════════
+#  SUPPORTI E RESISTENZE
+# ══════════════════════════════════════════════
+def find_support_resistance(df, n=20):
+    try:
+        highs = df["high"].rolling(5, center=True).max()
+        lows = df["low"].rolling(5, center=True).min()
+        resistance = sorted(highs.dropna().nlargest(3).values, reverse=True)
+        support = sorted(lows.dropna().nsmallest(3).values)
+        price = df["close"].iloc[-1]
+        nearest_res = min([r for r in resistance if r > price], default=None)
+        nearest_sup = max([s for s in support if s < price], default=None)
+        return {
+            "support": round(nearest_sup, 4) if nearest_sup else None,
+            "resistance": round(nearest_res, 4) if nearest_res else None,
+        }
+    except:
+        return {"support": None, "resistance": None}
+
+
+# ══════════════════════════════════════════════
+#  RISK/REWARD
+# ══════════════════════════════════════════════
+def calc_rr(price, tp, sl):
+    try:
+        reward = abs(tp - price)
+        risk = abs(sl - price)
+        if risk == 0: return 0
+        return round(reward / risk, 2)
+    except:
+        return 0
+
+
+# ══════════════════════════════════════════════
+#  PATTERN CANDELE
+# ══════════════════════════════════════════════
 def candle_score(df):
     patterns,pts = [],0
     o,h,l,c = df["open"].iloc[-1],df["high"].iloc[-1],df["low"].iloc[-1],df["close"].iloc[-1]
@@ -78,6 +180,10 @@ def candle_score(df):
     if c3>o3 and body/rng<0.3 and c<(o3+c3)/2: patterns.append("Evening Star"); pts-=12
     return (patterns if patterns else ["Nessun pattern"]),pts
 
+
+# ══════════════════════════════════════════════
+#  SCORING MULTI-TIMEFRAME
+# ══════════════════════════════════════════════
 def score_tf(t, candle_pts):
     s=50
     if t["rsi"]<30: s+=14
@@ -96,9 +202,14 @@ def score_tf(t, candle_pts):
     s+=candle_pts
     return max(0,min(100,round(s)))
 
-def combined_score(s4h,s1d):
-    return round(s4h*0.35+s1d*0.65)
+def combined_score(s15m, s1h, s4h, s1d):
+    # Peso crescente verso timeframe più lunghi
+    return round(s15m*0.1 + s1h*0.2 + s4h*0.3 + s1d*0.4)
 
+
+# ══════════════════════════════════════════════
+#  TARGET PRICE
+# ══════════════════════════════════════════════
 def compute_targets(t4h,t1d,bullish):
     price=t1d["price"]
     atr_4h=abs(t4h["bb_upper"]-t4h["bb_lower"])*0.25
@@ -111,6 +222,10 @@ def compute_targets(t4h,t1d,bullish):
             "tp2":tp2,"pct2":round((tp2-price)/price*100,2),
             "sl":sl,"pct_sl":round((sl-price)/price*100,2)}
 
+
+# ══════════════════════════════════════════════
+#  SENTIMENT GLOBALE
+# ══════════════════════════════════════════════
 def fetch_fear_greed():
     try:
         d=requests.get("https://api.alternative.me/fng/?limit=1",timeout=10).json()["data"][0]
@@ -128,51 +243,85 @@ def fetch_global():
                 "mcap_chg":round(d["market_cap_change_percentage_24h_usd"],2)}
     except: return {}
 
+
+# ══════════════════════════════════════════════
+#  UTILITY
+# ══════════════════════════════════════════════
 def bar(score,length=10):
     f=round(score/100*length)
     return "█"*f+"░"*(length-f)
 
 def fg_emoji(v):
-    if v<=25: return "Extreme Fear"
-    if v<=45: return "Fear"
-    if v<=55: return "Neutral"
-    if v<=75: return "Greed"
-    return "Extreme Greed"
+    if v<=25: return "😱 Extreme Fear"
+    if v<=45: return "😨 Fear"
+    if v<=55: return "😐 Neutral"
+    if v<=75: return "😄 Greed"
+    return "🤑 Extreme Greed"
 
 def pct_str(now,prev):
     p=(now-prev)/prev*100
     return f"{'▲' if p>=0 else '▼'} {abs(p):.2f}%"
 
-def build_signal_msg(sym,t4h,t1d,pats,score,s4h,s1d,is_alert=False):
+
+# ══════════════════════════════════════════════
+#  MESSAGGIO SEGNALE
+# ══════════════════════════════════════════════
+def build_signal_msg(sym,t4h,t1d,pats,score,s15m,s1h,s4h,s1d,
+                     divergence,sr,funding,news_sent,btc_trend,is_alert=False):
     bullish=score>=50
     tg=compute_targets(t4h,t1d,bullish)
     price=t1d["price"]
     name=sym.replace("/USDT","")
     now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    header="🚨 ALERT" if is_alert else "📊 SEGNALE"
     direction="STRONG BULLISH 🟢" if bullish else "STRONG BEARISH 🔴"
     sign="+" if bullish else ""
+    rr=calc_rr(price,tg["tp1"],tg["sl"])
+    header="🚨 ALERT IN TEMPO REALE" if is_alert else "📊 REPORT GIORNALIERO"
+
     lines=[
         f"{header} — {name}/USDT",
         f"{direction} ({score}% confidence)",
-        f"",
-        f"4h: {s4h}%  |  1d: {s1d}%",
-        f"",
-        f"Prezzo: ${price:,.4f}  {pct_str(price,t1d['prev'])}",
-        f"Target 4h: ${tg['tp1']:,.4f} ({sign}{tg['pct1']}%)",
-        f"Target 1d: ${tg['tp2']:,.4f} ({sign}{tg['pct2']}%)",
-        f"Stop Loss: ${tg['sl']:,.4f} ({tg['pct_sl']}%)",
         f"Forza: {bar(score)} {score}%",
         f"",
-        f"RSI: {t1d['rsi']:.1f}  |  MACD: {t1d['macd_hist']:.4f}",
-        f"EMA50: {t1d['ema50']:.2f}  |  EMA200: {t1d['ema200']:.2f}",
-        f"Stoch: {t1d['stoch_k']:.1f}/{t1d['stoch_d']:.1f}  |  Vol: {t1d['vol_ratio']:.2f}x",
+        f"⏱ Timeframe scores:",
+        f"  15m: {s15m}%  |  1h: {s1h}%  |  4h: {s4h}%  |  1d: {s1d}%",
         f"",
-        f"Pattern: {', '.join(pats)}",
+        f"💰 Prezzo: ${price:,.4f}  {pct_str(price,t1d['prev'])}",
+        f"🎯 Target 4h: ${tg['tp1']:,.4f} ({sign}{tg['pct1']}%)",
+        f"🎯 Target 1d: ${tg['tp2']:,.4f} ({sign}{tg['pct2']}%)",
+        f"🛑 Stop Loss: ${tg['sl']:,.4f} ({tg['pct_sl']}%)",
+        f"⚖️ Risk/Reward: {rr}:1{'  ✅' if rr>=2 else '  ⚠️'}",
         f"",
-        f"{now}",
+        f"📐 Indicatori (1d):",
+        f"  RSI: {t1d['rsi']:.1f}  |  MACD: {t1d['macd_hist']:.4f}",
+        f"  EMA50: {t1d['ema50']:.2f}  |  EMA200: {t1d['ema200']:.2f}",
+        f"  Stoch: {t1d['stoch_k']:.1f}/{t1d['stoch_d']:.1f}  |  Vol: {t1d['vol_ratio']:.2f}x",
     ]
+
+    if sr["support"] or sr["resistance"]:
+        lines.append(f"")
+        lines.append(f"📏 Livelli chiave:")
+        if sr["resistance"]: lines.append(f"  Resistenza: ${sr['resistance']:,.4f}")
+        if sr["support"]:    lines.append(f"  Supporto:   ${sr['support']:,.4f}")
+
+    if divergence:
+        div_txt = "🔺 Divergenza BULLISH (prezzo scende, RSI sale)" if divergence=="bullish" else "🔻 Divergenza BEARISH (prezzo sale, RSI scende)"
+        lines += [f"","⚡ {div_txt}"]
+
+    lines += [f"","🕯 Pattern: {', '.join(pats)}"]
+
+    lines += [f"","🌍 Contesto mercato:"]
+    lines.append(f"  BTC trend: {btc_trend.upper()}")
+    if funding is not None:
+        fund_txt = "ipervenduto 🟢" if funding<-0.05 else "ipercomprato 🔴" if funding>0.05 else "neutro"
+        lines.append(f"  Funding rate: {funding}% — {fund_txt}")
+    if news_sent != 0:
+        sent_txt = "positivo 🟢" if news_sent>0 else "negativo 🔴"
+        lines.append(f"  News sentiment: {news_sent:+}% — {sent_txt}")
+
+    lines += [f"",f"🕐 {now}"]
     return "\n".join(lines)
+
 
 def build_summary(fg,gl,n_signals,n_analysed):
     now=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
@@ -188,52 +337,78 @@ def build_summary(fg,gl,n_signals,n_analysed):
             f"Volume 24h: ${gl['vol24h']}B",
             f"BTC Dom: {gl['btc_dom']}%  |  ETH Dom: {gl['eth_dom']}%",
         ]
-    lines+=[
-        f"",
-        f"Asset analizzati: {n_analysed}",
-        f"Segnali forti (80%+): {n_signals}",
-    ]
+    lines+=[f"","Asset analizzati: {n_analysed}",f"Segnali forti (80%+): {n_signals}"]
     if n_signals==0:
-        lines+=["","Nessun segnale forte oggi. Meglio aspettare."]
+        lines+=["","🔕 Nessun segnale forte. Meglio aspettare."]
     return "\n".join(lines)
 
+
+# ══════════════════════════════════════════════
+#  SCANSIONE PRINCIPALE
+# ══════════════════════════════════════════════
 async def scan(is_daily=False):
     global sent_signals
     logger.info(f"Avvio scansione {'giornaliera' if is_daily else 'oraria'}...")
     bot=Bot(token=TELEGRAM_TOKEN)
     strong=[]
+    btc_trend=fetch_btc_trend()
 
     for sym in SYMBOLS:
         try:
-            df4h=fetch_ohlcv(sym,"4h",200)
-            df1d=fetch_ohlcv(sym,"1d",200)
-            if df4h is None or df1d is None or len(df1d)<55: continue
-            t4h=analyse(df4h)
-            t1d=analyse(df1d)
+            df15m=fetch_ohlcv(sym,"15m",200)
+            df1h =fetch_ohlcv(sym,"1h",200)
+            df4h =fetch_ohlcv(sym,"4h",200)
+            df1d =fetch_ohlcv(sym,"1d",200)
+            if any(x is None for x in [df15m,df1h,df4h,df1d]): continue
+            if len(df1d)<55: continue
+
+            t15m=analyse(df15m)
+            t1h =analyse(df1h)
+            t4h =analyse(df4h)
+            t1d =analyse(df1d)
+
             pats,cpts=candle_score(df1d)
-            s4h=score_tf(t4h,0)
-            s1d=score_tf(t1d,cpts)
-            score=combined_score(s4h,s1d)
+            s15m=score_tf(t15m,0)
+            s1h =score_tf(t1h,0)
+            s4h =score_tf(t4h,0)
+            s1d =score_tf(t1d,cpts)
+            score=combined_score(s15m,s1h,s4h,s1d)
             bullish=score>=50
             direction="BULL" if bullish else "BEAR"
 
-            is_strong = score>=MIN_SCORE or score<=(100-MIN_SCORE)
-            if not is_strong:
-                continue
+            # Filtra per BTC trend
+            if btc_trend=="bearish" and bullish: continue
+            if btc_trend=="bullish" and not bullish: continue
 
-            # Controlla se già inviato nelle ultime 24 ore
+            is_strong = score>=MIN_SCORE or score<=(100-MIN_SCORE)
+            if not is_strong: continue
+
+            # Evita duplicati nelle ultime 24h
             signal_key=f"{sym}_{direction}"
             last_sent=sent_signals.get(signal_key)
             now_ts=time.time()
-
             if not is_daily and last_sent and (now_ts-last_sent)<86400:
-                logger.info(f"  {sym} segnale già inviato, skip")
                 continue
-
-            # Aggiorna memoria
             sent_signals[signal_key]=now_ts
-            strong.append({"sym":sym,"t4h":t4h,"t1d":t1d,"pats":pats,
-                           "score":score,"s4h":s4h,"s1d":s1d})
+
+            # Dati aggiuntivi
+            divergence=detect_rsi_divergence(df1d)
+            sr=find_support_resistance(df1d)
+            funding=fetch_funding_rate(sym)
+            news_sent=fetch_news_sentiment(sym)
+
+            # Bonus score per divergenza confermata
+            if divergence=="bullish" and bullish: score=min(100,score+5)
+            if divergence=="bearish" and not bullish: score=min(100,score+5)
+
+            strong.append({
+                "sym":sym,"t4h":t4h,"t1d":t1d,"pats":pats,"score":score,
+                "s15m":s15m,"s1h":s1h,"s4h":s4h,"s1d":s1d,
+                "divergence":divergence,"sr":sr,"funding":funding,
+                "news_sent":news_sent,"btc_trend":btc_trend,
+            })
+            logger.info(f"  ✅ {sym} score={score}% — SEGNALE FORTE")
+
         except Exception as e:
             logger.error(f"Errore {sym}: {e}")
             continue
@@ -246,13 +421,17 @@ async def scan(is_daily=False):
         await asyncio.sleep(1)
 
     for sig in strong:
-        msg=build_signal_msg(sig["sym"],sig["t4h"],sig["t1d"],
-                             sig["pats"],sig["score"],sig["s4h"],sig["s1d"],
-                             is_alert=not is_daily)
+        msg=build_signal_msg(
+            sig["sym"],sig["t4h"],sig["t1d"],sig["pats"],sig["score"],
+            sig["s15m"],sig["s1h"],sig["s4h"],sig["s1d"],
+            sig["divergence"],sig["sr"],sig["funding"],
+            sig["news_sent"],sig["btc_trend"],
+            is_alert=not is_daily
+        )
         await bot.send_message(chat_id=CHAT_ID,text=msg)
         await asyncio.sleep(1)
 
-    logger.info(f"Scansione completata. Segnali: {len(strong)}")
+    logger.info(f"Scansione completata. Segnali forti: {len(strong)}")
 
 def daily_job():
     asyncio.run(scan(is_daily=True))
@@ -263,13 +442,10 @@ def hourly_job():
 if __name__=="__main__":
     send_time=f"{SEND_HOUR:02d}:{SEND_MINUTE:02d}"
     logger.info(f"Bot avviato — report giornaliero alle {send_time} UTC")
-    logger.info(f"Scansione alert ogni ora — soglia {MIN_SCORE}%")
-
+    logger.info(f"Alert in tempo reale ogni ora — soglia {MIN_SCORE}%")
     daily_job()
-
     schedule.every().day.at(send_time).do(daily_job)
     schedule.every().hour.do(hourly_job)
-
     while True:
         schedule.run_pending()
         time.sleep(30)
