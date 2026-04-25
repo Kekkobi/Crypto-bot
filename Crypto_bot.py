@@ -64,17 +64,6 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
         logger.error(f"Errore fetch {symbol} {timeframe}: {e}")
         return None
 
-def fetch_btc_trend():
-    try:
-        df = fetch_ohlcv("BTC/USDT", "1d", 10)
-        if df is None: return "neutro"
-        change = (df["close"].iloc[-1] - df["close"].iloc[-3]) / df["close"].iloc[-3] * 100
-        if change > 3: return "bullish"
-        if change < -3: return "bearish"
-        return "neutro"
-    except:
-        return "neutro"
-
 def fetch_fear_greed():
     try:
         d = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10).json()["data"][0]
@@ -226,7 +215,7 @@ def build_signal_msg(sig, is_alert=False):
     bullish = sig["score"] >= 50
     tg = compute_targets(sig["t4h"], sig["t1d"], bullish)
     price = sig["t1d"]["price"]
-    name = sig["sym"].replace("/USDT", "")
+    name = sig["sym"].replace("/USDT", "").replace("/USD", "")
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     direction = "STRONG BULLISH" if bullish else "STRONG BEARISH"
     emoji = "🟢" if bullish else "🔴"
@@ -305,7 +294,6 @@ async def scan(is_daily=False):
     logger.info(f"Avvio scansione {'giornaliera' if is_daily else 'ogni 4 ore'}...")
     bot = Bot(token=TELEGRAM_TOKEN)
     strong = []
-    btc_trend = fetch_btc_trend()
     all_symbols = get_all_binance_symbols()
 
     for sym in all_symbols:
@@ -326,8 +314,6 @@ async def scan(is_daily=False):
             score = combined_score(s1h, s4h, s1d)
             bullish = score >= 50
 
-            if btc_trend == "bearish" and bullish: continue
-            if btc_trend == "bullish" and not bullish: continue
             if score < MIN_SCORE and score > (100 - MIN_SCORE): continue
 
             direction = "BULL" if bullish else "BEAR"
@@ -373,7 +359,6 @@ if __name__ == "__main__":
     send_time = f"{SEND_HOUR:02d}:{SEND_MINUTE:02d}"
     logger.info(f"Bot avviato - report giornaliero alle {send_time} UTC")
     logger.info(f"Scansione completa ogni 4 ore - soglia {MIN_SCORE}%")
-    logger.info(f"Materie prime: Oro e Petrolio")
     daily_job()
     schedule.every().day.at(send_time).do(daily_job)
     schedule.every(4).hours.do(scan_job)
