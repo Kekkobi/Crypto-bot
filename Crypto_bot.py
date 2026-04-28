@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from telegram import Bot
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
+CHAT_IDS = [cid.strip() for cid in os.environ.get("CHAT_IDS", "").split(",") if cid.strip()]
 SEND_HOUR = 12
 SEND_MINUTE = 30
 MIN_SCORE = 80
@@ -35,32 +35,20 @@ SYMBOLS = [
     "EIGEN/USDT","ETHFI/USDT","DOGS/USDT","CATI/USDT","GRASS/USDT","USUAL/USDT",
     "VANA/USDT","ANIME/USDT","ZK/USDT","BLUR/USDT","CFX/USDT","MASK/USDT",
     "GMX/USDT","EOS/USDT","NEO/USDT","ZIL/USDT","BAT/USDT","DASH/USDT",
-    "ZEC/USDT","1INCH/USDT","LRC/USDT","CELR/USDT","COTI/USDT","ZRX/USDT",
-    "NMR/USDT","THETA/USDT","EGLD/USDT","XTZ/USDT","FLOW/USDT","RUNE/USDT",
-    "KSM/USDT","MINA/USDT","ONT/USDT","IOST/USDT","MTL/USDT","CVC/USDT",
-    "OGN/USDT","NKN/USDT","REEF/USDT","TRB/USDT","REN/USDT","LOOM/USDT",
-    "FUN/USDT","KEY/USDT","WAN/USDT","STMX/USDT","DATA/USDT","DUSK/USDT",
-    "CTSI/USDT","POLS/USDT","TFUEL/USDT","WRX/USDT","TROY/USDT","OAX/USDT",
-    "MITH/USDT","ERD/USDT","VITE/USDT","ARDR/USDT","SXP/USDT","LINA/USDT",
-    "BURGER/USDT","TLM/USDT","ALICE/USDT","DODO/USDT","SUPER/USDT","NFT/USDT",
-    "BETA/USDT","FARM/USDT","QUICK/USDT","PERP/USDT","RAMP/USDT","OM/USDT",
-    "HARD/USDT","BOND/USDT","MDX/USDT","MIR/USDT","ATA/USDT","TORN/USDT",
-    "FORTH/USDT","ILA/USDT","MASK/USDT","AGLD/USDT","RAD/USDT","RARE/USDT",
-    "LAZIO/USDT","PORTO/USDT","SANTOS/USDT","CITY/USDT","ATM/USDT","BAR/USDT",
-    "PSG/USDT","JUV/USDT","ASR/USDT","ACM/USDT","OG/USDT","ALPINE/USDT",
-    "GALA/USDT","ILV/USDT","YGG/USDT","HERO/USDT","CHESS/USDT","PEOPLE/USDT",
-    "SPELL/USDT","JOE/USDT","ACH/USDT","IMX/USDT","GLMR/USDT","MOVR/USDT",
-    "JASMY/USDT","AMP/USDT","PLA/USDT","API3/USDT","VOXEL/USDT","BICO/USDT",
-    "FIDA/USDT","TWT/USDT","AUCTION/USDT","DF/USDT","QI/USDT","XDEFI/USDT",
-    "BADGER/USDT","POND/USDT","IDEX/USDT","USDP/USDT","AERGO/USDT","OXT/USDT",
-    "DEGO/USDT","UNFI/USDT","CLV/USDT","PROM/USDT","MULTI/USDT","POLYX/USDT",
-    "LPT/USDT","STG/USDT","GMT/USDT","APE/USDT","BSW/USDT","MAGIC/USDT",
-    "T/USDT","LEVER/USDT","EPX/USDT","OP/USDT","LOOKS/USDT","HOOK/USDT",
-    "HIGH/USDT","LOKA/USDT","FITFI/USDT","SSV/USDT","AUCTION/USDT","SCRT/USDT",
-    "XNO/USDT","WOO/USDT","HIVE/USDT","STEEM/USDT","NEXO/USDT","PAXG/USDT",
-    "GNO/USDT","STORJ/USDT","KEEP/USDT","POWR/USDT","REQ/USDT","BIFI/USDT",
-    "GHST/USDT","MLN/USDT","DNT/USDT","MANA/USDT","RAY/USDT","FIDA/USDT",
-    "STEP/USDT","MEDIA/USDT","LIKE/USDT","SLND/USDT","SRM/USDT","MNGO/USDT",
+    "ZEC/USDT","1INCH/USDT","CELR/USDT","COTI/USDT","ZRX/USDT","NMR/USDT",
+    "THETA/USDT","EGLD/USDT","XTZ/USDT","FLOW/USDT","RUNE/USDT","KSM/USDT",
+    "MINA/USDT","ONT/USDT","MTL/USDT","OGN/USDT","REEF/USDT","TRB/USDT",
+    "REN/USDT","FUN/USDT","WAN/USDT","STMX/USDT","DUSK/USDT","CTSI/USDT",
+    "TFUEL/USDT","WRX/USDT","LINA/USDT","TLM/USDT","ALICE/USDT","SUPER/USDT",
+    "PERP/USDT","OM/USDT","WOO/USDT","HIVE/USDT","STORJ/USDT","POWR/USDT",
+    "GHST/USDT","GALA/USDT","ILV/USDT","YGG/USDT","PEOPLE/USDT","SPELL/USDT",
+    "IMX/USDT","JASMY/USDT","API3/USDT","BICO/USDT","GMT/USDT","APE/USDT",
+    "MAGIC/USDT","SSV/USDT","LPT/USDT","STG/USDT","HIGH/USDT","WOO/USDT",
+    "HOOK/USDT","LOOKS/USDT","T/USDT","AGLD/USDT","RAD/USDT","LOKA/USDT",
+    "ACH/USDT","GLMR/USDT","MOVR/USDT","AMP/USDT","VOXEL/USDT","QI/USDT",
+    "AUCTION/USDT","DF/USDT","POND/USDT","IDEX/USDT","DEGO/USDT","UNFI/USDT",
+    "CLV/USDT","PROM/USDT","POLYX/USDT","BSW/USDT","EPX/USDT","LEVER/USDT",
+    "CHESS/USDT","BETA/USDT","QUICK/USDT","HERO/USDT","BADGER/USDT","OXT/USDT",
 ]
 
 def fetch_commodity(ticker, name):
@@ -239,6 +227,14 @@ def pct_str(now, prev):
     p = (now - prev) / prev * 100
     return f"{'▲' if p >= 0 else '▼'} {abs(p):.2f}%"
 
+async def send_to_all(bot, text):
+    for cid in CHAT_IDS:
+        try:
+            await bot.send_message(chat_id=cid, text=text)
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Errore invio a {cid}: {e}")
+
 def build_signal_msg(sig, is_alert=False):
     bullish = sig["score"] >= 50
     tg = compute_targets(sig["t4h"], sig["t1d"], bullish)
@@ -289,7 +285,7 @@ def build_summary(fg, gl, n_signals, n_analysed):
 
 async def scan_commodities(bot, is_alert=False):
     commodities = [("GC=F","ORO/USD"),("CL=F","PETROLIO/USD")]
-    strong = []
+    count = 0
     for ticker, name in commodities:
         try:
             df = fetch_commodity(ticker, name)
@@ -297,20 +293,21 @@ async def scan_commodities(bot, is_alert=False):
             t = analyse(df)
             pats, cpts = candle_score(df)
             s = score_tf(t, cpts)
-            if s >= MIN_SCORE or s <= (100-MIN_SCORE):
-                key = f"{name}_{'BULL' if s>=50 else 'BEAR'}"
-                now_ts = time.time()
-                if not sent_signals.get(key) or (now_ts-sent_signals[key])>=86400:
-                    sent_signals[key] = now_ts
-                    strong.append({"sym":name,"t4h":t,"t1d":t,"pats":pats,
-                                   "score":s,"s1h":s,"s4h":s,"s1d":s,
-                                   "div":detect_rsi_divergence(df),"sr":find_sr(df)})
+            bullish = s >= 50
+            is_strong = (bullish and s >= MIN_SCORE) or (not bullish and s <= (100 - MIN_SCORE))
+            if not is_strong: continue
+            key = f"{name}_{'BULL' if bullish else 'BEAR'}"
+            now_ts = time.time()
+            if sent_signals.get(key) and (now_ts - sent_signals[key]) < 86400: continue
+            sent_signals[key] = now_ts
+            sig = {"sym":name,"t4h":t,"t1d":t,"pats":pats,
+                   "score":s,"s1h":s,"s4h":s,"s1d":s,
+                   "div":detect_rsi_divergence(df),"sr":find_sr(df)}
+            await send_to_all(bot, build_signal_msg(sig, is_alert))
+            count += 1
         except Exception as e:
             logger.error(f"Errore commodity {name}: {e}")
-    for sig in strong:
-        await bot.send_message(chat_id=CHAT_ID, text=build_signal_msg(sig, is_alert))
-        await asyncio.sleep(1)
-    return len(strong)
+    return count
 
 async def scan(is_daily=False):
     global sent_signals
@@ -334,15 +331,21 @@ async def scan(is_daily=False):
             s1d = score_tf(t1d, cpts)
             score = combined_score(s1h, s4h, s1d)
             bullish = score >= 50
-            if score < MIN_SCORE and score > (100-MIN_SCORE): continue
-            direction = "BULL" if bullish else "BEAR"
-            key = f"{sym}_{direction}"
+
+            # ✅ FILTRO CORRETTO — solo ≥80% bullish o ≤20% bearish
+            is_strong = (bullish and score >= MIN_SCORE) or (not bullish and score <= (100 - MIN_SCORE))
+            if not is_strong: continue
+
+            key = f"{sym}_{'BULL' if bullish else 'BEAR'}"
             now_ts = time.time()
-            if sent_signals.get(key) and (now_ts-sent_signals[key]) < 86400: continue
+            if sent_signals.get(key) and (now_ts - sent_signals[key]) < 86400: continue
             sent_signals[key] = now_ts
-            strong.append({"sym":sym,"t4h":t4h,"t1d":t1d,"pats":pats,
-                           "score":score,"s1h":s1h,"s4h":s4h,"s1d":s1d,
-                           "div":detect_rsi_divergence(df1d),"sr":find_sr(df1d)})
+
+            strong.append({
+                "sym":sym,"t4h":t4h,"t1d":t1d,"pats":pats,
+                "score":score,"s1h":s1h,"s4h":s4h,"s1d":s1d,
+                "div":detect_rsi_divergence(df1d),"sr":find_sr(df1d),
+            })
             logger.info(f"  SEGNALE {sym} score={score}%")
         except Exception as e:
             logger.error(f"Errore {sym}: {e}")
@@ -354,11 +357,11 @@ async def scan(is_daily=False):
         fg = fetch_fear_greed()
         gl = fetch_global()
         summary = build_summary(fg, gl, len(strong)+n_comm, len(SYMBOLS)+2)
-        await bot.send_message(chat_id=CHAT_ID, text=summary)
+        await send_to_all(bot, summary)
         await asyncio.sleep(1)
 
     for sig in strong:
-        await bot.send_message(chat_id=CHAT_ID, text=build_signal_msg(sig, is_alert=not is_daily))
+        await send_to_all(bot, build_signal_msg(sig, is_alert=not is_daily))
         await asyncio.sleep(1)
 
     logger.info(f"Completato. Segnali: {len(strong)+n_comm}/{len(SYMBOLS)}")
@@ -372,7 +375,8 @@ def scan_job():
 if __name__ == "__main__":
     send_time = f"{SEND_HOUR:02d}:{SEND_MINUTE:02d}"
     logger.info(f"Bot avviato — {len(SYMBOLS)} crypto + Oro + Petrolio")
-    logger.info(f"Report giornaliero alle {send_time} UTC — Scansione ogni 4 ore")
+    logger.info(f"Report giornaliero alle {send_time} UTC")
+    logger.info(f"Scansione ogni 4 ore — soglia CORRETTA: bullish≥{MIN_SCORE}% / bearish≤{100-MIN_SCORE}%")
     daily_job()
     schedule.every().day.at(send_time).do(daily_job)
     schedule.every(4).hours.do(scan_job)
